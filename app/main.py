@@ -10,7 +10,7 @@ scheduler = BackgroundScheduler()
 async def lifespan(app: FastAPI):
     # Startup event: configure and start APScheduler
     # Will run every hour from Monday to Friday
-    trigger = CronTrigger(day_of_week="mon-fri", hour="*")
+    trigger = CronTrigger(day_of_week="mon-fri", hour="19", minute="30")
     scheduler.add_job(
         scan_stocks_job, 
         trigger=trigger, 

@@ -44,26 +44,44 @@ def get_top_tickers_by_sentiment() -> List[str]:
             )
         )
         
-        # Clean the response text in case AI wraps it in markdown ```json ... ```
-        raw_text = response.text.strip()
-        if raw_text.startswith("```json"):
-            raw_text = raw_text.replace("```json", "", 1)
-        if raw_text.startswith("```"):
-            raw_text = raw_text.replace("```", "", 1)
-        if raw_text.endswith("```"):
-            raw_text = raw_text[:-3]
-        raw_text = raw_text.strip()
+        # Log the raw response for debugging in case of failure
+        raw_text = response.text.strip() if response.text else ""
+        logger.debug(f"Raw Gemini Grounding Response: {raw_text}")
+        
+        if not raw_text:
+            logger.error("Gemini returned an empty response for top tickers.")
+            return []
+
+        # Robust cleaning of the response text (handling markdown and potential prefix/suffix)
+        processed_text = raw_text
+        if "```json" in processed_text:
+            processed_text = processed_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in processed_text:
+            processed_text = processed_text.split("```")[1].split("```")[0].strip()
+        
+        # Remove common characters that might be outside the JSON array
+        processed_text = processed_text.strip()
+        
+        # Try to find the start and end of a JSON array if cleaning failed
+        if not (processed_text.startswith("[") and processed_text.endswith("]")):
+            start_idx = processed_text.find("[")
+            end_idx = processed_text.rfind("]")
+            if start_idx != -1 and end_idx != -1:
+                processed_text = processed_text[start_idx:end_idx+1]
             
-        tickers = json.loads(raw_text)
+        tickers = json.loads(processed_text)
         if isinstance(tickers, list):
             # Limit to exactly 10 if AI somehow ignores the prompt
-            limited_tickers = tickers[:10]
+            limited_tickers = [str(t).upper().strip() for t in tickers[:10]]
             logger.info(f"AI Selected Top Tickers based on Macro News: {limited_tickers}")
             return limited_tickers
         else:
-            logger.error(f"AI returned invalid format for top tickers: {tickers}")
+            logger.error(f"AI returned invalid format (not a list) for top tickers: {type(tickers)}")
             return []
             
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON response from Gemini Grounding: {e}. Raw content was: {raw_text[:200]}...")
+        return []
     except Exception as e:
         logger.error(f"Error fetching top tickers via Gemini Grounding: {e}")
         return []
