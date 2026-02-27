@@ -23,12 +23,13 @@ def get_top_tickers_by_sentiment() -> List[str]:
         return []
         
     prompt = """
-    Cari berita terbaru hari ini terkait ekonomi makro Amerika Serikat dan Global, kebijakan politik, 
+    Bertindaklah sebagai Ekonom Makro. Cari berita terbaru hari ini terkait ekonomi makro Amerika Serikat dan Global, kebijakan politik, 
     dan sentimen pasar saham secara real-time menggunakan Google Search. 
     
     Analisa berita tersebut dan pilih MAKSIMAL 10 saham (Ticker Symbol) AS yang paling sangat berpotensi 
-    naik dalam waktu dekat berdasarkan sentimen faktual hari ini.
+    naik dalam waktu dekat berdasarkan isu global terbaru dan sentimen faktual hari ini.
     
+    PENTING: JANGAN pilih saham (ticker) yang memiliki jadwal laporan laba (Earnings) dalam 2 hari ke depan.
     Abaikan saham yang sentimennya negatif atau netral. Fokus pada yang mendapat katalis positif terkuat.
     
     KEMBALIKAN HANYA ARRAY JSON LIST OF STRINGS (kode Ticker saja) TANPA TEKS LAIN ATAU PENJELASAN APAPUN. Contoh:
@@ -36,13 +37,26 @@ def get_top_tickers_by_sentiment() -> List[str]:
     """
     
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[{'google_search': {}}] # Enable Google Search Grounding
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[{'google_search': {}}] # Enable Google Search Grounding
+                )
             )
-        )
+        except Exception as inner_e:
+            if "429" in str(inner_e):
+                logger.warning("Rate limit reached for gemini-2.5-flash on sentiment analysis. Falling back to gemini-2.0-flash...")
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[{'google_search': {}}]
+                    )
+                )
+            else:
+                raise inner_e
         
         # Log the raw response for debugging in case of failure
         raw_text = response.text.strip() if response.text else ""
@@ -102,31 +116,47 @@ def analyze_stock_data(ticker: str, data: List[Dict[str, Any]]) -> Optional[Dict
     Data:
     {json.dumps(simplified_data)}
     
-    Act as a Senior Financial Analyst focusing on technical analysis. 
+    Act as a Senior Technical Analyst. 
     Analyze the trend, momentum, and volume of the closing prices.
+    Calculate the Risk/Reward Ratio. 
+    CRITICAL INSTRUCTION: If the ratio between (target_price - entry_price) and (entry_price - stop_loss) is less than 1:2 (meaning potential reward is less than 2x the risk), you MUST set "recommendation" to "HOLD" or "NEUTRAL", not "BUY".
     Determine if this stock is a good BUY right now.
     
     Respond strictly in JSON format with the following schema:
     {{
         "ticker": "{ticker}",
-        "recommendation": "BUY" | "HOLD" | "SELL",
+        "recommendation": "BUY" | "HOLD" | "SELL" | "NEUTRAL",
         "confidence": <float 0.0 - 100.0>,
         "entry_price": <float recommended entry price>,
         "target_price": <float take profit target>,
         "stop_loss": <float cut loss limit>,
+        "risk_reward_ratio": "<string e.g. '1:3' or '1:2.5'>",
         "estimated_days_to_target": <integer estimation of days to reach target frame>,
         "reasoning": "<short explanation based on the closing price trend and volume. MUST BE WRITTEN IN INDONESIAN LANGUAGE (BAHASA INDONESIA)>"
     }}
     """
     
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                )
             )
-        )
+        except Exception as inner_e:
+            if "429" in str(inner_e):
+                logger.warning(f"Rate limit reached for gemini-2.5-flash on {ticker}. Falling back to gemini-2.0-flash...")
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                    )
+                )
+            else:
+                raise inner_e
         
         # Model is configured to return JSON application/json
         result = json.loads(response.text)
@@ -137,5 +167,94 @@ def analyze_stock_data(ticker: str, data: List[Dict[str, Any]]) -> Optional[Dict
         logger.error(f"Failed to parse JSON response from Gemini for {ticker}: {e}\nRaw Response: {response.text}")
     except Exception as e:
         logger.error(f"Error analyzing data with Gemini for {ticker}: {e}")
+        
+    return None
+
+def analyze_ticker_with_indicators(ticker: str, current_price: float, sma: List[Dict], ema: List[Dict], macd: List[Dict], rsi: List[Dict]) -> Optional[Dict[str, Any]]:
+    """
+    Analyze technical data using Gemini for on-demand risk analysis.
+    Uses purely technical logic without Grounding.
+    """
+    if not client:
+        return None
+        
+    prompt = f"""
+    Act as a Professional Risk and Technical Analyst.
+    Analyze the following technical indicators for the stock ticker {ticker}.
+    
+    Current Close Price: {current_price}
+    
+    Latest Indicators (last 5 trading days, latest first):
+    - SMA 200: {json.dumps(sma)}
+    - EMA 20: {json.dumps(ema)}
+    - MACD (12, 26, 9): {json.dumps(macd)}
+    - RSI (14): {json.dumps(rsi)}
+    
+    RULES FOR ANALYSIS:
+    1. SMA 200: This is your Main Filter. If the Current Price is BELOW the latest SMA 200 value, the stock is in a long-term downtrend and is generally high risk.
+    2. EMA 20: Current Trend Indicator. Check if the latest EMA is trending up or down.
+    3. MACD: Momentum Confirmation. Check if MACD line ('value') is above the Signal line ('signal'), or if the histogram is growing positively to confirm momentum.
+    4. RSI: Identify overbought (>70), oversold (<30), or neutral momentum. A recovering RSI from oversold can be a good setup if the trend confirms.
+    
+    Combine these technical trends to determine if the stock is currently Bullish, Bearish, or Neutral.
+    DO NOT use Google Search. Analyze the provided data only.
+    
+    CRITICAL: YOU MUST RETURN ONLY A RAW JSON OBJECT (Not an array). Do not include any other text.
+    
+    Format:
+    {{
+        "ticker": "{ticker}",
+        "recommendation": "Bullish" | "Bearish" | "Neutral",
+        "key_risks": "<string listing 1-2 main risks based solely on technicals>",
+        "summary": "<Short, punchy summary of the situation (Indonesian Language)>"
+    }}
+    """
+    
+    try:
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+        except Exception as inner_e:
+            if "429" in str(inner_e):
+                logger.warning(f"Rate limit reached for gemini-2.5-flash on {ticker}. Falling back to gemini-2.0-flash...")
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt
+                )
+            else:
+                raise inner_e
+        
+        raw_text = response.text.strip() if response.text else ""
+        if not raw_text:
+            return None
+
+        # Robust cleaning
+        processed_text = raw_text
+        if "```json" in processed_text:
+            processed_text = processed_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in processed_text:
+            processed_text = processed_text.split("```")[1].split("```")[0].strip()
+        
+        processed_text = processed_text.strip()
+        
+        if not (processed_text.startswith("{") and processed_text.endswith("}")):
+            start_idx = processed_text.find("{")
+            end_idx = processed_text.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                processed_text = processed_text[start_idx:end_idx+1]
+                
+        result = json.loads(processed_text)
+        logger.info(f"Technical Analysis completed for {ticker}: {result.get('recommendation')}")
+        return result
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON for technical analysis {ticker}: {e}\n{raw_text[:200]}")
+    except Exception as e:
+        if "429" in str(e):
+            logger.error(f"Gemini API Rate Limit Reached for {ticker} (429 RESOURCE_EXHAUSTED).")
+            raise e
+        logger.error(f"Error analyzing technical data with Gemini for {ticker}: {e}")
         
     return None

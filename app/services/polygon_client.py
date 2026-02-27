@@ -37,3 +37,36 @@ def fetch_daily_aggregates(ticker: str, start_date: str, end_date: str) -> Optio
         logger.error(f"Unexpected error in Polygon client for {ticker}: {e}")
         
     return None
+
+def fetch_technical_indicator(ticker: str, indicator: str, extra_params: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """
+    Fetch a specific technical indicator (sma, ema, macd, rsi) from Polygon.io.
+    """
+    url = f"https://api.polygon.io/v1/indicators/{indicator}/{ticker}"
+    params = {
+        "timespan": "day",
+        "adjusted": "true",
+        "series_type": "close",
+        "order": "desc",
+        "limit": 5, # We only need the latest 5 records for AI to see recent movement
+        "apiKey": settings.POLYGON_API_KEY
+    }
+    params.update(extra_params)
+    
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        if data.get("results") and data["results"].get("values"):
+            return data["results"]["values"]
+        else:
+            logger.warning(f"No {indicator} results found for {ticker}")
+            return None
+            
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HTTP Error fetching {indicator} for {ticker}: {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        logger.error(f"Unexpected error fetching {indicator} for {ticker}: {e}")
+        
+    return None

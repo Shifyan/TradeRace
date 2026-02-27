@@ -20,9 +20,9 @@ def scan_stocks_job():
         
     logger.info(f"Target Tickers for technical analysis: {target_tickers}")
     
-    # Get dates for trend analysis (e.g., last 30 days)
+    # Get dates for trend analysis (e.g., last 200 days for MA-200 detection)
     end_date_obj = datetime.date.today()
-    start_date_obj = end_date_obj - datetime.timedelta(days=30)
+    start_date_obj = end_date_obj - datetime.timedelta(days=200)
     
     end_date_str = end_date_obj.strftime("%Y-%m-%d")
     start_date_str = start_date_obj.strftime("%Y-%m-%d")
@@ -50,9 +50,23 @@ def scan_stocks_job():
                 continue
                 
             if analysis.get("recommendation") == "BUY" and analysis.get("confidence", 0) > 75:
-                # Store potential pick for ranking
-                potential_picks.append(analysis)
-                logger.info(f"{ticker} passed technical BUY criteria with {analysis.get('confidence')}% confidence.")
+                # Mathematical Validation Filter (Emergency Brake)
+                try:
+                    entry_price = float(analysis.get("entry_price", 0))
+                    target_price = float(analysis.get("target_price", 0))
+                    stop_loss = float(analysis.get("stop_loss", 0))
+                    
+                    risk = entry_price - stop_loss
+                    reward = target_price - entry_price
+                    
+                    if risk > 0 and reward >= (2 * risk):
+                        # Store potential pick for ranking
+                        potential_picks.append(analysis)
+                        logger.info(f"{ticker} passed technical BUY criteria and mathematical Risk/Reward filter (Reward: {reward:.2f} >= 2 * Risk: {risk:.2f}).")
+                    else:
+                        logger.info(f"Ticker {ticker} failed mathematical Risk/Reward filter (Reward {reward:.2f} < 2 * Risk {risk:.2f}). Rejecting.")
+                except (ValueError, TypeError):
+                    logger.warning(f"Failed to parse prices for Risk/Reward calculation on {ticker}. Rejecting.")
             else:
                 logger.info(f"Ticker {ticker} did not meet strong BUY criteria. Recommendation: {analysis.get('recommendation')}")
                 
@@ -82,13 +96,15 @@ def scan_stocks_job():
         entry_price = analysis.get("entry_price", "-")
         target_price = analysis.get("target_price", "-")
         stop_loss = analysis.get("stop_loss", "-")
+        rr_ratio = analysis.get("risk_reward_ratio", "-")
         est_days = analysis.get("estimated_days_to_target", "-")
         
         message = f"Ticker: {ticker} (BUY)\n"
         message += f"Confidence: {analysis.get('confidence')}%\n"
         message += f"Entry: ${entry_price}\n"
         message += f"Target: ${target_price} ({est_days} Hari)\n"
-        message += f"Stop Loss: ${stop_loss}\n\n"
+        message += f"Stop Loss: ${stop_loss}\n"
+        message += f"R/R Ratio: {rr_ratio}\n\n"
         message += f"Analisa: {reasoning}"
         
         # Send notification via Ntfy.sh
