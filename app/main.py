@@ -8,6 +8,7 @@ import time
 from app.services.polygon_client import fetch_daily_aggregates, fetch_technical_indicator
 from app.services.gemini_agent import analyze_ticker_with_indicators
 from app.services.notification import send_ntfy_notification
+from app.database.supabase_client import save_recommendation, get_supabase_client
 
 scheduler = BackgroundScheduler()
 
@@ -142,3 +143,31 @@ def test_notification():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error testing notification: {str(e)}")
+
+@app.post("/api/test-db/insert")
+def test_db_insert():
+    """Endpoint for testing database insertion - adds a 'MOCK' ticker entry."""
+    try:
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        mock_analysis = {
+            "recommendation": "BULLISH",
+            "confidence": 99.9,
+            "reasoning": "Database testing mock entry."
+        }
+        save_recommendation("MOCK", today, mock_analysis)
+        return {"status": "success", "message": f"Successfully inserted MOCK data for {today}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database insert test failed: {str(e)}")
+
+@app.delete("/api/test-db/cleanup")
+def test_db_cleanup():
+    """Endpoint for testing database deletion - removes all 'MOCK' ticker entries."""
+    try:
+        supabase = get_supabase_client()
+        response = supabase.table("recommendations").delete().eq("ticker", "MOCK").execute()
+        return {
+            "status": "success", 
+            "message": f"Cleanup successful. Removed {len(response.data)} mock entries."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database cleanup failed: {str(e)}")
