@@ -1,72 +1,69 @@
 # Dokumentasi Teknis & Alur Bisnis StockRace
 
-Aplikasi **StockRace** adalah sistem rekomendasi saham otomatis yang menggabungkan analitik berita makro ekonomi (Sentiment Analysis) dengan analisa pergerakan harga historis (Technical Analysis) menggunakan AI tercanggih Google Gemini dan data pasar Polygon.io.
+Aplikasi **StockRace** adalah sistem analitik saham yang sangat canggih dan sepenuhnya otomatis. Sistem ini menggabungkan pencarian isu global _(Macro Economy)_ menggunakan kecerdasan buatan, dengan lapisan pertahanan Analisa Teknikal yang dibantu oleh perhitungan matematika murni untuk menghasilkan panduan _Risk/Reward_ terbaik bagi Anda.
 
 ---
 
-## 🏗️ Arsitektur & Arsitektur Kode
+## 🏗️ Arsitektur Sistem Baru
 
-### 1. Entry Point & Scheduler (`app/main.py`)
+### 1. The Brain: Google Gemini 2.5 Flash & 2.0 Flash (Auto-Fallback)
 
-- **Fungsi**: Titik masuk aplikasi berbasis FastAPI.
-- **Logic**: Menginisialisasi `APScheduler` saat aplikasi dimulai (`lifespan`). Scheduler ini diatur untuk menjalankan `scan_stocks_job` setiap jam pada hari kerja (Senin-Jumat). Juga menyediakan endpoint `POST /api/scan/trigger` untuk memicu pemindaian secara manual via webhook.
+- **Fungsi Utama**: AI bertindak sebagai otak yang mengolah data sentimen dan teknikal.
+- **Quota Protection (Auto-Fallback)**: Karena menggunakan API _Free Tier_, batas harian rentan tersentuh (Error 429). Jika model utama `gemini-2.5-flash` menolak bekerja karena limit, _script_ akan langsung menangkap _error_ secara diam-diam dan menembak ulang permintaan ke model cadangan `gemini-2.0-flash`. Sistem tidak akan pernah berhenti bekerja hanya karena masalah kuota.
 
-### 2. Macro Sentiment Agent (`app/services/gemini_agent.py` -> `get_top_tickers_by_sentiment`)
+### 2. The Data: Polygon.io
 
-- **Fungsi**: Bertindak sebagai Ekonom Makro.
-- **Logic**: Menggunakan Gemini 2.5 Flash dengan fitur **Google Search Grounding**. AI akan mencari berita terbaru (politik, ekonomi, inflasi, laporan laba) secara real-time di internet.
-- **Output**: Memilih maksimal **10 Ticker Saham** yang memiliki sentimen positif terkuat hari ini.
+- **Fungsi Utama**: Menyediakan harga penutupan dan data indikator matematika murni (SMA, EMA, MACD, RSI).
+- **Rate Limit Protection**: Untuk menghormati limit tier gratis maksimum 5 panggilan/menit, fungsi analisis dipasang _jeda tidur_ `time.sleep(12)` setiap kali menembak data indikator baru. Alur akan terasa lambat (disengaja) tapi sangat stabil.
 
-### 3. Data Acquisiton (`app/services/polygon_client.py`)
+### 3. The Endpoints (`app/main.py`)
 
-- **Fungsi**: Penarik data harga riil.
-- **Logic**: Mengambil data harian (OHLCV) dari Polygon.io untuk rentang **30 hari ke belakang** bagi setiap ticker yang dipilih oleh AI Macro. Data ini penting untuk melihat tren pergerakan harga.
-
-### 4. Technical Analysis Agent (`app/services/gemini_agent.py` -> `analyze_stock_data`)
-
-- **Fungsi**: Bertindak sebagai Senior Technical Analyst.
-- **Logic**: Menerima data 30 hari dari Polygon. AI menganalisa pola harga penutupan (_closing price_), volume, dan momentum.
-- **Output**: JSON berisi rekomendasi (BUY/HOLD/SELL), `entry_price`, `target_price`, `stop_loss`, dan alasan teknikal dalam Bahasa Indonesia.
-
-### 5. Notification & Deduplication (`app/services/notification.py` & `app/database/supabase_client.py`)
-
-- **Fungsi**: Pengirim informasi dan pengontrol duplikasi.
-- **Logic**:
-  - **Deduplication**: Mengecek Supabase apakah ticker tersebut sudah direkomendasikan hari ini. Jika sudah, proses dilewati untuk menghindari spam.
-  - **Notification**: Mengirim push notification ke Ntfy.sh (yang bisa diteruskan ke Telegram/Mobile) jika hasil analisa teknikal memiliki status `BUY` dengan tingkat keyakinan (_confidence_) > 75%.
+- **Automated Cron**: Berjalan setiap pukul 19:30 WIB di hari kerja (Senin-Jumat).
+- **On-Demand technical**: Endpoint `/api/analyze/{ticker}` yang disediakan khusus jika user ingin memeriksa saham tertentu secara kilat di luar jam pantauan.
+- **Testing**: Endpoint `/api/test-notify` untuk debug notifikasi tanpa menyedot limit API.
 
 ---
 
-## 🔀 Alur Kerja Detail (Step-by-Step)
+## 🔀 Alur Kerja Utama (Cron Job Flow)
 
-### Tahap 1: Pencarian Peluang (Macro Scan)
+Alur otomatis yang akan berjalan setiap hari ini memiliki 4 tahap ketat:
 
-Sistem tidak menggunakan daftar saham yang kaku. Pertama, Gemini akan "membaca berita" dunia hari ini menggunakan Google Search. Jika ada berita bahwa sektor AI sedang naik atau kebijakan suku bunga menguntungkan sektor tertentu, Gemini akan memberikan daftar 10 perusahaan (misal: `NVDA`, `MSFT`, `AMD`, dll).
+### Tahap 1: Macro Economist (Grounding Search)
 
-### Tahap 2: Validasi Harga (Technical Scan & Rate Limiting)
+Gemini ditugaskan menjadi **Ekonom Makro**. Ia dibekali fitur _Google Search Grounding_ untuk berselancar di internet mencari momentum politik, suku bunga, dan isu global terbaru hari ini.
 
-Aplikasi melakukan _looping_ terhadap 10 ticker tersebut.
+- **Rule 1**: AI diwajibkan mengabaikan saham yang akan merilis Laporan Laba (_Earnings_) dalam jeda 2 hari ke depan untuk menghindari malapetaka volatilitas.
+- **Output**: Menghasilkan **Top 10 Ticker** yang mendapat sentimen/katalis paling positif hari ini.
 
-1. **Delay**: Menggunakan `time.sleep(6)` di setiap iterasi saham untuk menghormati kuota gratis API Gemini (Rate Limit).
-2. **Tarik Data**: Mengambil data harga 30 hari terakhir.
-3. **Analisa AI**: Gemini menganalisa apakah tren harga mendukung berita makronya. Saham yang dianggap layak beli dimasukkan ke dalam daftar "Kandidat Potensial".
+### Tahap 2: Technical Analyst (Risk/Reward Scan)
 
-### Tahap 3: Penyaringan Puncak (The Final 5)
+Ke-10 daftar saham "jalur langit" tersebut kemudian diturunkan ke fungsi teknikal. AI berganti peran menjadi **Senior Technical Analyst** dengan menyerap grafik historis 200 hari.
 
-Dari 10 saham awal, mungkin tidak semuanya memiliki grafik teknikal yang bagus.
+- **Rule 2**: AI wajib menghitung potensi kerugian dan keuntungan (_Risk/Reward_). Jika keuntungan terprediksi `(Target - Entry)` dibanding risiko loss `(Entry - Stop Loss)` rasionya lebih buruk dari **1:2**, AI dilarang keras merekomendasikan `"BUY"`. Statusnya harus diturunkan menjadi `"HOLD"` atau `"NEUTRAL"`.
 
-1. Semua kandidat yang berstatus `BUY` dikumpulkan dan diurutkan berdasarkan skor **Confidence** (keyakinan AI) tertinggi.
-2. Aplikasi melakukan _filter_ ketat: Hanya **Top 5** saham dengan skor tertinggi yang akan lanjut ke tahap notifikasi.
+### Tahap 3: Python Emergency Brake (Mathematical Filter)
 
-### Tahap 4: Pengiriman & Pencatatan
+Setelah AI setuju memberikan rekomendasi `BUY`, aplikasi backend Python (bukan AI) melakukan pengecekan ulang secara matematis sebagai _"Rem Darurat"_.
 
-1. Mengirim notifikasi detail (Entry, Target, Stop Loss, Alasan) ke user.
-2. Mencatat ID ticker dan tanggal hari ini ke Supabase PostgreSQL. Dengan adanya catatan ini, jika aplikasi berjalan lagi 1 jam kemudian, sistem akan tahu bahwa saham ini sudah dikirim dan tidak akan mengirimnya ulang.
+- **Logic**: `reward = target_price - entry_price` dan `risk = entry_price - stop_loss`.
+- **Validation**: Jika secara matematika Python menemukan `reward < (2 * risk)`, saham tersebut langsung **dibuang** dari daftar meskipun AI bersikeras merekomendasikannya. Hanya profil sehat yang lolos.
+
+### Tahap 4: The Final 5 & Ntfy Push
+
+Dari serangkaian penyaringan berat tersebut, mungkin hanya akan tersisa sedikit saham.
+Sistem mengurutkan sisanya berdasarkan tingkat keyakinan (Confidence) > 75%, dan mengambil maksimal **Top 5**.
+Pesan peringkas berisi _R/R Ratio_, Target Hari, Label, dll. kemudian dikemas menggunakan _Encoding ASCII_ untuk menghindari _crash logger_ di Windows, dan didorong seketika ke _handphone_ Anda melalui Ntfy.
 
 ---
 
-## 💡 Ringkasan Logika Bisnis
+## 🛠️ Alur Endpoint Khusus: `/api/analyze/{ticker}`
 
-Aplikasi ini menjawab tantangan: _"Bagaimana cara menemukan saham yang secara berita bagus, secara grafik teknis juga mendukung, tetapi tidak membombardir user dengan terlalu banyak notifikasi?"_
+Ini adalah alur alternatif untuk mengecek ticker manual.
+Berbeda dengan sistem _Cron Job_ di atas yang berbasis Berita/Makro, endpoint ini adalah alat ukur **100% Teknikal Murni** tanpa fitur pencarian Google (No Grounding).
 
-Dengan alur **Dunia (News) -> Data (Polygon) -> Filter (Technical) -> Top 5 (Final)**, aplikasi memastikan user hanya mendapatkan informasi yang benar-benar berkualitas tinggi dan tervalidasi oleh dua metode analisa (Fundamental/Sentimen & Teknikal).
+1. Menarik 5 pergerakan terakhir dari indikator **SMA-200, EMA-20, MACD, dan RSI**.
+2. Memberikan instruksi mesin (Rule-based) ekstrem pada AI:
+   - **Filter Utama**: Tolak mentah-mentah jika Harga Penutupan Saat Ini berada **di bawah SMA-200** (Long-term downtrend).
+   - Momentum MACD menyilang (_Crossover_ signal).
+   - Zona RSI menguntungkan (Bukan _overbought_ >70).
+3. Mengembalikan penilaian instan ke layar pengguna lengkap dengan ringkasan analisa teknikalnya agar mereka tahu area mana yang sedang dilewati saham tersebut.
