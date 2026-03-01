@@ -26,7 +26,7 @@ def get_top_tickers_by_sentiment() -> List[str]:
     Bertindaklah sebagai Ekonom Makro. Cari berita terbaru hari ini terkait ekonomi makro Amerika Serikat dan Global, kebijakan politik, 
     dan sentimen pasar saham secara real-time menggunakan Google Search. 
     
-    Analisa berita tersebut dan pilih MAKSIMAL 10 saham (Ticker Symbol) AS yang paling sangat berpotensi 
+    Analisa berita tersebut dan pilih MAKSIMAL 2 saham (Ticker Symbol) AS yang paling sangat berpotensi 
     naik dalam waktu dekat berdasarkan isu global terbaru dan sentimen faktual hari ini.
     
     PENTING: JANGAN pilih saham (ticker) yang memiliki jadwal laporan laba (Earnings) dalam 2 hari ke depan.
@@ -100,7 +100,7 @@ def get_top_tickers_by_sentiment() -> List[str]:
         logger.error(f"Error fetching top tickers via Gemini Grounding: {e}")
         return []
 
-def analyze_stock_data(ticker: str, data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def analyze_stock_data(ticker: str, data: List[Dict[str, Any]], sma_20, ema_20, macd, rsi) -> Optional[Dict[str, Any]]:
     """Analyze historical technical data using Gemini and return JSON representation."""
     if not client:
         logger.error("Gemini client is not initialized. Cannot analyze data.")
@@ -108,6 +108,7 @@ def analyze_stock_data(ticker: str, data: List[Dict[str, Any]]) -> Optional[Dict
         
     # Extract only essential data to save tokens (e.g., closing prices and volume)
     simplified_data = [{"c": d.get("c"), "v": d.get("v"), "t": d.get("t")} for d in data]
+    
         
     prompt = f"""
     Analyze the following historical daily aggregate stock data for {ticker} over the last time period.
@@ -115,9 +116,15 @@ def analyze_stock_data(ticker: str, data: List[Dict[str, Any]]) -> Optional[Dict
     
     Data:
     {json.dumps(simplified_data)}
+
+    Indicators:
+    - SMA 20: {json.dumps(sma_20)}  (list of float values)
+    - EMA 20: {json.dumps(ema_20)}  (list of float values)
+    - MACD (8, 17, 9): {json.dumps(macd)}   (list of dicts with keys 'value', 'signal', 'histogram')
+    - RSI (14): {json.dumps(rsi)}  (list of float values)
     
     Act as a Senior Technical Analyst. 
-    Analyze the trend, momentum, and volume of the closing prices.
+    Analyze the trend, momentum, indicators, and volume of the closing prices.
     Calculate the Risk/Reward Ratio. 
     CRITICAL INSTRUCTION: If the ratio between (target_price - entry_price) and (entry_price - stop_loss) is less than 1:2 (meaning potential reward is less than 2x the risk), you MUST set "recommendation" to "HOLD" or "NEUTRAL", not "BUY".
     Determine if this stock is a good BUY right now.
@@ -179,37 +186,43 @@ def analyze_ticker_with_indicators(ticker: str, current_price: float, sma: List[
         return None
         
     prompt = f"""
-    Act as a Professional Risk and Technical Analyst.
-    Analyze the following technical indicators for the stock ticker {ticker}.
-    
+    Act as a Professional Risk and Technical Analyst specializing in swing trading (daily to weekly timeframe).
+    Analyze the following technical indicators for the stock ticker {ticker}. All data series contain the last 50 trading days, with the most recent value at the end of the list.
+
     Current Close Price: {current_price}
-    
-    Latest Indicators (last 50 trading days):
-    - SMA 20: {json.dumps(sma)}
-    - EMA 20: {json.dumps(ema)}
-    - MACD (8, 17, 9): {json.dumps(macd)}
-    - RSI (14): {json.dumps(rsi)}
-    
+
+    Indicator Data (last 50 days, most recent last):
+    - SMA 20: {json.dumps(sma)}  (list of float values)
+    - EMA 20: {json.dumps(ema)}  (list of float values)
+    - MACD (8, 17, 9): {json.dumps(macd)}  (list of dicts with keys 'value', 'signal', 'histogram')
+    - RSI (14): {json.dumps(rsi)}  (list of float values)
+
     RULES FOR ANALYSIS:
-    1. SMA 20: This is your Main Filter. If the Current Price is BELOW the latest SMA 20 value, the stock is in a sort-term downtrend and is generally high risk.
-    2. EMA 20: Current Trend Indicator. Check if the latest EMA is trending up or down.
-    3. MACD: Momentum Confirmation. Check if MACD line ('value') is above the Signal line ('signal'), or if the histogram is growing positively to confirm momentum.
-    4. RSI: Identify overbought (>70), oversold (<30), or neutral momentum. A recovering RSI from oversold can be a good setup if the trend confirms.
-    
-    Combine these technical trends to determine if the stock is currently Bullish, Bearish, or Neutral.
-    DO NOT use Google Search. Analyze the provided data only.
-    
-    CRITICAL: YOU MUST RETURN ONLY A RAW JSON OBJECT (Not an array). Do not include any other text.
-    
+    1. **SMA 20 (Main Filter)**: Take the latest SMA 20 value (last element). If Current Price is below this value, the stock is in a short-term downtrend and considered higher risk for long positions.
+    2. **EMA 20 (Trend Indicator)**: Compare the latest EMA value with the previous day's EMA (second last) to determine if the trend is up (latest > previous) or down (latest < previous).
+    3. **MACD (Momentum Confirmation)**:
+       - Check if the latest MACD line ('value') is above the Signal line ('signal') – bullish momentum.
+       - Also check the histogram: if the latest histogram is positive and greater than the previous day's histogram, momentum is strengthening.
+    4. **RSI (Overbought/Oversold)**:
+       - Identify if latest RSI is overbought (>70), oversold (<30), or neutral.
+       - If oversold and latest RSI > previous RSI, it signals potential recovery (bullish).
+       - If overbought and latest RSI < previous RSI, it signals potential weakness (bearish).
+
+    Combine these signals to determine a final recommendation:
+    - **Bullish**: Price above SMA 20, EMA trending up, MACD bullish (value above signal and histogram positive/growing), and RSI not overbought (or recovering from oversold).
+    - **Bearish**: Price below SMA 20, EMA trending down, MACD bearish (value below signal and histogram negative), and RSI not oversold (or falling from overbought).
+    - **Neutral**: Mixed signals or no clear direction.
+
+    CRITICAL: RETURN ONLY A RAW JSON OBJECT. Do not include any other text, explanations, or markdown.
+
     Format:
     {{
         "ticker": "{ticker}",
         "recommendation": "Bullish" | "Bearish" | "Neutral",
-        "key_risks": "<string listing 1-2 main risks based solely on technicals>",
-        "summary": "<Short, punchy summary of the situation (Indonesian Language)>"
+        "key_risks": "<string listing 1-2 main technical risks, punchy key risk in Indonesian>",
+        "summary": "<Short, punchy summary in Indonesian>"
     }}
     """
-    
     try:
         try:
             response = client.models.generate_content(

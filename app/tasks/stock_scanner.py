@@ -1,6 +1,6 @@
 import datetime
 import time
-from app.services.polygon_client import fetch_daily_aggregates
+from app.services.polygon_client import fetch_daily_aggregates, fetch_technical_indicator
 from app.services.gemini_agent import analyze_stock_data, get_top_tickers_by_sentiment
 from app.services.notification import send_ntfy_notification
 from app.database.supabase_client import is_already_recommended, save_recommendation
@@ -43,8 +43,15 @@ def scan_stocks_job():
             if not data:
                 logger.warning(f"No data found for {ticker} between {start_date_str} and {end_date_str}. Skipping analysis.")
                 continue
-                
-            analysis = analyze_stock_data(ticker, data)
+            time.sleep(12)
+            sma_20 = fetch_technical_indicator(ticker, "sma", {"window": 20}) or []
+            time.sleep(12)
+            ema_20 = fetch_technical_indicator(ticker, "ema", {"window": 20}) or []
+            time.sleep(12)
+            macd = fetch_technical_indicator(ticker, "macd", {"short_window": 8, "long_window": 17, "signal_window": 9}) or []
+            time.sleep(12)
+            rsi = fetch_technical_indicator(ticker, "rsi", {"window": 14}) or []
+            analysis = analyze_stock_data(ticker, data, sma_20, ema_20, macd, rsi)
             if not analysis:
                 logger.warning(f"Failed to analyze data for {ticker}. Skipping notification.")
                 continue

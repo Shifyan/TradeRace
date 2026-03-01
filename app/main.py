@@ -9,6 +9,8 @@ from app.services.polygon_client import fetch_daily_aggregates, fetch_technical_
 from app.services.gemini_agent import analyze_ticker_with_indicators
 from app.services.notification import send_ntfy_notification
 from app.database.supabase_client import save_recommendation, get_supabase_client
+import pandas as pd
+import pandas_ta as ta
 
 scheduler = BackgroundScheduler()
 
@@ -196,3 +198,76 @@ def test_polygon_api():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error testing Polygon API: {str(e)}")
+@app.get("/api/test-pandas")
+def test_pandas():
+    """Endpoint for testing Pandas functionality."""
+    try:
+        ticker = "AAPL"
+        end_date_obj = datetime.date.today()
+        # Gunakan parameter days=10 agar lebih eksplisit dan aman
+        start_date_obj = end_date_obj - datetime.timedelta(days=100) 
+        
+        end_date_str = end_date_obj.strftime("%Y-%m-%d")
+        start_date_str = start_date_obj.strftime("%Y-%m-%d")
+        
+        print(f"Testing Polygon API fetch for {ticker} from {start_date_str} to {end_date_str}...")
+        data = fetch_daily_aggregates(ticker, start_date_str, end_date_str)
+        
+        # 1. PROTEKSI: Cek apakah API mengembalikan data
+        if not data:
+            return {"status": "success", "message": "No data found for this period.", "data": []}
+
+        # 2. Load ke DataFrame
+        df = pd.DataFrame(data)
+
+        # 3. Rename kolom agar lebih mudah dibaca
+        df.rename(columns={
+            'v': 'volume',
+            'vw': 'vwap',
+            'o': 'open',
+            'c': 'close',
+            'h': 'high',
+            'l': 'low',
+            't': 'timestamp',
+            'n': 'transactions'
+        }, inplace=True)
+
+        # 4. Konversi timestamp (milidetik) ke format tanggal
+        df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
+
+        # 5. Set 'date' sebagai index
+        df.set_index('date', inplace=True)
+        
+        # Cara 1: Menghitung satu per satu (Lebih rapi dan nama kolom bisa diatur)
+        df['SMA_20'] = ta.sma(df['close'], length=20)
+        df['EMA_20'] = ta.ema(df['close'], length=20)
+        df['RSI_14'] = ta.rsi(df['close'], length=14)
+        
+        # MACD mengembalikan 3 kolom (MACD, Histogram, Signal), jadi kita gabungkan ke df
+        macd = ta.macd(df['close'], fast=8, slow=17, signal=9)
+        if macd is not None:
+            df = pd.concat([df, macd], axis=1)
+
+        # Cara 2 (Opsional): Gunakan strategi bawaan pandas_ta untuk menghitung banyak sekaligus
+        # df.ta.strategy("All") # (Hati-hati, ini akan menambah ratusan kolom indikator!)
+
+        # ==========================================
+        
+        # Karena 20 hari pertama tidak punya nilai SMA 20, hasilnya adalah NaN (Kosong).
+        # Kita hapus baris yang kosong tersebut agar data bersih saat dikirim ke AI.
+        df.dropna(inplace=True) 
+
+        
+        # 6. PERSIAPAN JSON (Sama seperti sebelumnya)
+        result_df = df.reset_index()
+        result_df['date'] = result_df['date'].astype(str)
+        result_df = result_df.where(pd.notnull(result_df), None)
+
+        return {
+            "status": "success", 
+            "data": result_df.to_dict(orient="records")
+        }
+        
+    except Exception as e:
+        print(f"Error detail: {e}") 
+        raise HTTPException(status_code=500, detail=f"Error testing Pandas: {str(e)}")
