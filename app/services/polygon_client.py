@@ -14,7 +14,7 @@ def fetch_daily_aggregates(ticker: str, start_date: str, end_date: str) -> Optio
     params = {
         "adjusted": "true",
         "sort": "asc",
-        "limit": 120, # Added limit as per user example
+        # "limit": 120, # Added limit as per user example
         "apiKey": settings.POLYGON_API_KEY
     }
     
@@ -48,13 +48,13 @@ def fetch_technical_indicator(ticker: str, indicator: str, extra_params: Dict[st
         "adjusted": "true",
         "series_type": "close",
         "order": "desc",
-        "limit": 5, # We only need the latest 5 records for AI to see recent movement
+        "limit": 50, # We only need the latest 5 records for AI to see recent movement
         "apiKey": settings.POLYGON_API_KEY
     }
     params.update(extra_params)
     
     try:
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=100)
         response.raise_for_status()
         
         data = response.json()

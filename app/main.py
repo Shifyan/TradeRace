@@ -69,20 +69,20 @@ def analyze_ticker_on_demand(ticker: str):
     # Fetch Indicators (with 12 second delays to respect Polygon Free Tier limit of 5 req/min)
     # The endpoint needs 5 API calls total (1 agg + 4 indicators) = ~1 minute to complete
     time.sleep(12)
-    sma_200 = fetch_technical_indicator(ticker, "sma", {"window": 200}) or []
+    sma_20 = fetch_technical_indicator(ticker, "sma", {"window": 20}) or []
     
     time.sleep(12)
     ema_20 = fetch_technical_indicator(ticker, "ema", {"window": 20}) or []
     
     time.sleep(12)
-    macd = fetch_technical_indicator(ticker, "macd", {"short_window": 12, "long_window": 26, "signal_window": 9}) or []
+    macd = fetch_technical_indicator(ticker, "macd", {"short_window": 8, "long_window": 17, "signal_window": 9}) or []
     
     time.sleep(12)
     rsi = fetch_technical_indicator(ticker, "rsi", {"window": 14}) or []
     
     # Analyze with Gemini
     try:
-        analysis = analyze_ticker_with_indicators(ticker, current_price, sma_200, ema_20, macd, rsi)
+        analysis = analyze_ticker_with_indicators(ticker, current_price, sma_20, ema_20, macd, rsi)
         if not analysis:
             raise HTTPException(status_code=500, detail="Failed to analyze technicals with Gemini")
             
@@ -159,6 +159,7 @@ def test_db_insert():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database insert test failed: {str(e)}")
 
+
 @app.delete("/api/test-db/cleanup")
 def test_db_cleanup():
     """Endpoint for testing database deletion - removes all 'MOCK' ticker entries."""
@@ -171,3 +172,27 @@ def test_db_cleanup():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database cleanup failed: {str(e)}")
+    
+    
+@app.get("/api/test-API/fetch")
+def test_polygon_api():
+    """Endpoint for testing Polygon API data fetching."""
+    try:
+        ticker = "AAPL"
+        end_date_obj = datetime.date.today()
+        start_date_obj = end_date_obj - datetime.timedelta(days=200)
+        end_date_str = end_date_obj.strftime("%Y-%m-%d")
+        start_date_str = start_date_obj.strftime("%Y-%m-%d")
+        print(f"Testing Polygon API fetch for {ticker} from {start_date_str} to {end_date_str}...")
+        data = fetch_daily_aggregates(ticker, start_date_str, end_date_str)
+        current_price = data[-1].get("c", 0)
+
+        if data:
+            return {"status": "success", "data": data, "current_price": current_price}
+        else:
+            raise HTTPException(status_code=404, detail=f"No data found for {ticker} between {start_date_str} and {end_date_str}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error testing Polygon API: {str(e)}")

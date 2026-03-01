@@ -184,14 +184,14 @@ def analyze_ticker_with_indicators(ticker: str, current_price: float, sma: List[
     
     Current Close Price: {current_price}
     
-    Latest Indicators (last 5 trading days, latest first):
-    - SMA 200: {json.dumps(sma)}
+    Latest Indicators (last 50 trading days):
+    - SMA 20: {json.dumps(sma)}
     - EMA 20: {json.dumps(ema)}
-    - MACD (12, 26, 9): {json.dumps(macd)}
+    - MACD (8, 17, 9): {json.dumps(macd)}
     - RSI (14): {json.dumps(rsi)}
     
     RULES FOR ANALYSIS:
-    1. SMA 200: This is your Main Filter. If the Current Price is BELOW the latest SMA 200 value, the stock is in a long-term downtrend and is generally high risk.
+    1. SMA 20: This is your Main Filter. If the Current Price is BELOW the latest SMA 20 value, the stock is in a sort-term downtrend and is generally high risk.
     2. EMA 20: Current Trend Indicator. Check if the latest EMA is trending up or down.
     3. MACD: Momentum Confirmation. Check if MACD line ('value') is above the Signal line ('signal'), or if the histogram is growing positively to confirm momentum.
     4. RSI: Identify overbought (>70), oversold (<30), or neutral momentum. A recovering RSI from oversold can be a good setup if the trend confirms.
