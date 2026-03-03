@@ -6,7 +6,7 @@ from app.tasks.stock_scanner import scan_stocks_job
 import datetime
 import time
 from app.services.polygon_client import fetch_daily_aggregates, fetch_technical_indicator
-from app.services.gemini_agent import analyze_ticker_with_indicators
+from app.services.gemini_agent import gemini_agent
 from app.services.notification import send_ntfy_notification
 from app.database.supabase_client import save_recommendation, get_supabase_client
 import pandas as pd
@@ -84,7 +84,7 @@ def analyze_ticker_on_demand(ticker: str):
     
     # Analyze with Gemini
     try:
-        analysis = analyze_ticker_with_indicators(ticker, current_price, sma_20, ema_20, macd, rsi)
+        analysis = gemini_agent.analyze_ticker_with_indicators(ticker, current_price, sma_20, ema_20, macd, rsi)
         if not analysis:
             raise HTTPException(status_code=500, detail="Failed to analyze technicals with Gemini")
             
@@ -276,8 +276,8 @@ def test_pandas():
 def test_deepseek():
     """Endpoint for testing DeepSeek API integration."""
     try:
-        from app.services.deepseek_agent import query_deepseek
-        response = query_deepseek()
+        from app.services.deepseek_agent import deepseek_agent
+        response = deepseek_agent.query_deepseek()
         return {"status": "success", "response": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error testing DeepSeek API: {str(e)}")

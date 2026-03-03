@@ -1,7 +1,7 @@
 import datetime
 import time
 from app.services.polygon_client import fetch_daily_aggregates, fetch_technical_indicator
-from app.services.gemini_agent import analyze_stock_data, get_top_tickers_by_sentiment
+from app.services.gemini_agent import gemini_agent
 from app.services.notification import send_ntfy_notification
 from app.database.supabase_client import is_already_recommended, save_recommendation
 from app.utils.logger import get_logger
@@ -13,7 +13,7 @@ def scan_stocks_job():
     logger.info("Starting stock scan job with AI Macro-Sentiment Analysis...")
     
     # 1. Ask Gemini to search Google News and pick top 10 tickers
-    target_tickers = get_top_tickers_by_sentiment()
+    target_tickers = gemini_agent.get_top_tickers_by_sentiment()
     if not target_tickers:
         logger.error("Failed to retrieve top tickers from AI. Aborting scan job.")
         return
@@ -30,9 +30,11 @@ def scan_stocks_job():
     potential_picks = []
     
     # 2. Extract technicals and run AI analysis on the 10 tickers
-    for ticker in target_tickers:
+    for item in target_tickers:
+        ticker = item["ticker"]
+        catalyst = item["catalyst"]
         try:
-            logger.info(f"Processing technicals for ticker: {ticker}")
+            logger.info(f"Processing technicals for ticker: {ticker} (Catalyst: {catalyst})")
             
             # Anti-spam logic: Skip if already recommended today
             if is_already_recommended(ticker, end_date_str):
@@ -51,7 +53,7 @@ def scan_stocks_job():
             macd = fetch_technical_indicator(ticker, "macd", {"short_window": 8, "long_window": 17, "signal_window": 9}) or []
             time.sleep(12)
             rsi = fetch_technical_indicator(ticker, "rsi", {"window": 14}) or []
-            analysis = analyze_stock_data(ticker, data, sma_20, ema_20, macd, rsi)
+            analysis = gemini_agent.analyze_stock_data(ticker, data, sma_20, ema_20, macd, rsi, catalyst)
             if not analysis:
                 logger.warning(f"Failed to analyze data for {ticker}. Skipping notification.")
                 continue
