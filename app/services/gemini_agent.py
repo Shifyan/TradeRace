@@ -23,17 +23,26 @@ def get_top_tickers_by_sentiment() -> List[str]:
         return []
         
     prompt = """
-    Bertindaklah sebagai Ekonom Makro. Cari berita terbaru hari ini terkait ekonomi makro Amerika Serikat dan Global, kebijakan politik, 
-    dan sentimen pasar saham secara real-time menggunakan Google Search. 
-    
-    Analisa berita tersebut dan pilih MAKSIMAL 2 saham (Ticker Symbol) AS yang paling sangat berpotensi 
-    naik dalam waktu dekat berdasarkan isu global terbaru dan sentimen faktual hari ini.
-    
-    PENTING: JANGAN pilih saham (ticker) yang memiliki jadwal laporan laba (Earnings) dalam 2 hari ke depan.
-    Abaikan saham yang sentimennya negatif atau netral. Fokus pada yang mendapat katalis positif terkuat.
-    
-    KEMBALIKAN HANYA ARRAY JSON LIST OF STRINGS (kode Ticker saja) TANPA TEKS LAIN ATAU PENJELASAN APAPUN. Contoh:
-    ["AAPL", "TSLA", "NVDA", "PLTR"]
+   Act as a Macro Economist and Swing Trading Analyst. Use Google Search Grounding to find the latest economic, political, and market news.
+
+    **Objective:**
+    Identify **10 US stocks** with the strongest positive catalysts for a **swing trade (holding period: 2 days to 2 weeks)** based on today's news.
+
+    **Filtering Criteria:**
+    1.  **Macro Catalyst:** Prioritize stocks in sectors currently benefiting from today's macro narrative (e.g., falling treasury yields, sector rotation, commodity price shifts, policy announcements).
+    2.  **Avoid Traps:** EXCLUDE stocks that gapped up more than 5% pre-market due to news, unless they show strong support.
+    3.  **Technical Confirmation (CRITICAL):** For each ticker, ensure the daily chart shows:
+        - Price is above the 20-day Exponential Moving Average (EMA).
+        - Volume is above the 20-day average volume (indicating institutional interest).
+        - The stock is not in a clear downtrend (i.e., making lower lows).
+    4.  **Earnings Safety:** JANGAN pilih saham yang memiliki jadwal laporan laba (Earnings) dalam 5 hari ke depan.
+
+    **Output Format:**
+    KEMBALIKAN HANYA ARRAY JSON.
+    [
+        "TICKER1",
+        "TICKER2",
+        ]
     """
     
     try:

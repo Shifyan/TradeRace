@@ -271,3 +271,13 @@ def test_pandas():
     except Exception as e:
         print(f"Error detail: {e}") 
         raise HTTPException(status_code=500, detail=f"Error testing Pandas: {str(e)}")
+    
+@app.get("/api/test-deepseek")
+def test_deepseek():
+    """Endpoint for testing DeepSeek API integration."""
+    try:
+        from app.services.deepseek_agent import query_deepseek
+        response = query_deepseek()
+        return {"status": "success", "response": response}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error testing DeepSeek API: {str(e)}")
