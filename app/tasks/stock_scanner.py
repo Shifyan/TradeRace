@@ -50,10 +50,12 @@ def scan_stocks_job():
             time.sleep(12)
             ema_20 = fetch_technical_indicator(ticker, "ema", {"window": 20}) or []
             time.sleep(12)
+            ema_50 = fetch_technical_indicator(ticker, "ema", {"window": 50}) or []
+            time.sleep(12)
             macd = fetch_technical_indicator(ticker, "macd", {"short_window": 8, "long_window": 17, "signal_window": 9}) or []
             time.sleep(12)
             rsi = fetch_technical_indicator(ticker, "rsi", {"window": 14}) or []
-            analysis = gemini_agent.analyze_stock_data(ticker, data, sma_20, ema_20, macd, rsi, catalyst)
+            analysis = gemini_agent.analyze_stock_data(ticker, data, sma_20, ema_20, ema_50, macd, rsi, catalyst)
             if not analysis:
                 logger.warning(f"Failed to analyze data for {ticker}. Skipping notification.")
                 continue

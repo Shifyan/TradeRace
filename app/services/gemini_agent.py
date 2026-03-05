@@ -125,22 +125,22 @@ class GeminiAgent:
             logger.error(f"Error fetching top tickers via Gemini Grounding: {e}")
             return []
 
-    def analyze_stock_data(self, ticker: str, data: List[Dict[str, Any]], sma_20, ema_20, macd, rsi, catalyst: str = "") -> Optional[Dict[str, Any]]:
+    def analyze_stock_data(self, ticker: str, data: List[Dict[str, Any]], sma_20, ema_20,ema_50, macd, rsi, catalyst: str = "") -> Optional[Dict[str, Any]]:
         """Analyze historical technical data using Gemini and return JSON representation."""
         if not self.client:
             logger.error("Gemini client is not initialized. Cannot analyze data.")
             return None
             
         # Extract only essential data to save tokens (e.g., closing prices and volume)
-        simplified_data = [{"c": d.get("c"), "v": d.get("v"), "t": d.get("t")} for d in data]
+        simplified_data = [{"c": d.get("c"), "v": d.get("v"), "t": d.get("t"), "h": d.get("h"), "l": d.get("l")} for d in data]
         
             
         prompt_sesi2 = f"""
-        Analyze the following historical daily aggregate stock data for {ticker} over the last 60 trading days.
-        The data is an array of records where 'c' is closing price, 'v' is volume, 't' is unix timestamp.
+        Analyze the following historical daily stock data for {ticker} over the last 60 trading days.
+        Each record contains: 'h' (high), 'l' (low), 'c' (close), 'v' (volume), 't' (unix timestamp).
 
         Data:
-        {json.dumps(simplified_data)}
+        {json.dumps(simplified_data)}  # ensure data includes h, l, c, v
 
         Catalyst (Fundamental News):
         {catalyst}
@@ -148,22 +148,57 @@ class GeminiAgent:
         Indicators (pre-calculated):
         - SMA 20: {json.dumps(sma_20)}
         - EMA 20: {json.dumps(ema_20)}
+        - EMA 50: {json.dumps(ema_50)}  # optional, highly recommended
         - MACD (8,17,9): {json.dumps(macd)}  (list of dicts with 'value','signal','histogram')
         - RSI (14): {json.dumps(rsi)}
+        - ATR (14): (Analyze From Price Data)  # now can be calculated with high, low, close
 
-        Act as a Senior Technical Analyst. Analyze trend, momentum, and volume.
+        Act as a Senior Technical Analyst. Analyze trend, momentum, and volume using daily data.
 
         **Rules for Entry, Stop Loss, Target:**
-        - Entry Price: Use the latest closing price.
-        - Stop Loss: Place below the nearest support level (e.g., recent swing low or below EMA 20 if it acted as support). If no clear support, use 1.5x ATR below entry.
-        - Target Price: Based on nearest resistance level (recent swing high) or a risk/reward ratio of at least 1:2. If no clear resistance, use Fibonacci extension or 2x ATR above entry.
-        - Risk/Reward Ratio: Calculate as (target - entry) / (entry - stop). If ratio < 2, you MUST set recommendation to "HOLD" or "NEUTRAL", not "BUY".
+        - **Entry Price:** Use the latest closing price.
+        - **Stop Loss:** Place below the **nearest significant historical support level**.
+        - Identify the most recent *swing low*: a low price that is lower than the lows of the 2 days before and after it, within the last 15 days. Choose the closest swing low below current price (i.e., the highest low among those below). Place stop loss **slightly below that low** (e.g., 0.1% below or one tick, using the same decimal precision as the price). This ensures the stop is placed at a level where price has historically bounced.
+        - If no clear swing low exists, use the EMA 20 if it has recently acted as support (price bounced off it). Place stop slightly below EMA 20.
+        - If still no clear level, use **1.5 x ATR below entry** as a last resort.
+        - **Target Price:** Based on a **risk/reward approach** rather than mandatory historical resistance.
+        - The primary goal is to achieve a risk/reward ratio of at least 1:2. Therefore, set the target at a level that yields a ratio ≥ 2, using either:
+            - A multiple of the risk amount: `target = entry + 2 * (entry - stop)` (ensures exactly 1:2 ratio).
+            - A multiple of ATR: `target = entry + 2 * ATR` (if ATR-based stop was used, this maintains consistency).
+        - If a nearby historical resistance level (swing high) exists and is higher than this calculated target, you may use it as it could improve the ratio, but it is not required. If the resistance is lower than the calculated target, using it would reduce the ratio below 2, so avoid it.
+        - Psychological levels (round numbers) can also be considered if they align with the target.
+        - **Risk/Reward Ratio:** Calculate (target - entry) / (entry - stop). If ratio < 2, recommendation MUST be "HOLD" or "NEUTRAL" (not "BUY"/"SELL").
+        - **Trend Filter:**
+        - For BUY: ensure price > EMA20 > EMA50 (uptrend).
+        - For SELL: ensure price < EMA20 < EMA50 (downtrend).
+        - If not, consider HOLD/NEUTRAL.
+        - **RSI:**
+        - Note overbought (>70) or oversold (<30) conditions.
+        - Check whether RSI > 50 (bullish momentum) or < 50 (bearish).
+        - Detect divergences: if price makes lower low (based on low) but RSI makes higher low → bullish divergence. If price makes higher high but RSI makes lower high → bearish divergence.
+        - **MACD:**
+        - Check if MACD line > signal line (bullish) and histogram positive.
+        - A recent cross (MACD crossing above signal) is a strong signal.
+        - **Volume:**
+        - Compare latest volume with the 20-day average volume. A surge in volume on up days confirms strength.
+        - **Breakout Confirmation (optional):**
+        - If price breaks resistance (previous high), ensure the candle closes above that resistance and volume is above average for validation.
 
-        **Confidence:** Based on confluence of indicators (e.g., MACD bullish cross, RSI >50, volume > average). 0-100%.
+        **Confidence Score (0-100):** Based on confluence of indicators.
+        - Trend alignment (uptrend/downtrend) : 20 points
+        - RSI > 50 or < 50 : 10, divergence : +10
+        - MACD cross and positive histogram : 20
+        - Volume > average : 20
+        - Clear historical support (swing low) used for stop loss : +10 (reinforces reliability)
+        - Risk/reward > 2 : 10
+        - (Additional) Bullish/bearish candlestick pattern : +10
+        Maximum 100.
 
-        **Estimated Days:** Use typical swing trade duration (2-10 days) based on volatility and trend strength.
+        **Estimated Days to Target:** Estimate based on distance to target and ATR. Example: (target - entry) / (ATR * 0.5) rounded, but keep within 2-10 days. If the raw estimate exceeds 10 days, cap it at 10, but note that this may indicate the target is too far for a typical swing trade; consider whether a BUY/SELL is still appropriate.
 
-        **Reasoning:** Explain in Bahasa Indonesia, covering trend, volume, and indicator signals.
+        **Reasoning:** Explain in English, covering trend, volume, indicator signals, the specific historical support level used for stop loss, and how the target was determined (e.g., based on 1:2 risk/reward or ATR multiple). Include the rationale for the recommendation.
+
+        **Catalyst Interpretation:** Incorporate the catalyst news if it aligns with or contradicts the technical signals. For example, positive news may increase confidence in a BUY, while negative news may downgrade it. Explain in the "catalyst" field.
 
         Respond strictly in JSON:
         {{
@@ -175,8 +210,8 @@ class GeminiAgent:
             "stop_loss": float,
             "risk_reward_ratio": "1:x.x",
             "estimated_days_to_target": integer,
-            "reasoning": "string in Indonesian",
-            "catalyst": "string in Indonesian"
+            "reasoning": "string in Bahasa Indonesia",
+            "catalyst": "string in Bahasa Indonesia"
         }}
         """
         
